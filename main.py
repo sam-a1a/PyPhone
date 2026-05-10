@@ -70,7 +70,7 @@ def draw_page_dots(screen):
 
     pygame.gfxdraw.aacircle(screen, center_x + 15, dot_y, 3, grey)
     pygame.gfxdraw.filled_circle(screen, center_x + 15, dot_y, 3, grey)
-2
+
 def draw_bezel(screen):
     pygame.draw.rect(
         screen, COLOR_BLACK,

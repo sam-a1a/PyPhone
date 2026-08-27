@@ -32,7 +32,8 @@ pill-shaped Dynamic Island, live clock, battery and signal glyphs; a four-across
 grid over a three-stop sunset gradient computed per scanline; a translucent
 dock with a notification badge; a full-width weather widget; page dots; and a
 rounded black bezel composited over the top. Tapping an icon plays a splash
-animation — the icon holds, then zooms as the app takes over the screen.
+animation — the icon holds on a full-bleed colour field, then cross-fades out
+as the app takes over the screen.
 
 **Two apps that actually work.** Not mockups. They log you in, remember you
 after you quit, read and write a SQLite database, and enforce who is allowed
@@ -196,9 +197,9 @@ utils.py                 sunset gradient, alpha-masked rounded rectangles
 components/              status bar + Dynamic Island, icons, dock, widgets
 
 apps/
-  base_app.py            screen stack, event loop, header and bezel
-  app_manager.py         app registry
-  splash_screen.py       the zoom-in animation when an icon is tapped
+  base_app.py            60fps run loop, event dispatch, header and bezel
+  app_manager.py         name → app class registry
+  splash_screen.py       the hold-and-fade animation when an icon is tapped
 
   shared/                everything that is not drawing code
     database.py          59 methods: CRUD, queries, statistics, sessions

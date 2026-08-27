@@ -1,28 +1,30 @@
 #SQLite Database manager
-import hashlib
 import os
 import sqlite3
 from datetime import datetime
 from typing import List, Optional
 
 from apps.shared.models import Patient, Doctor, Appointment, Admin
+from apps.shared import security
 
 class Database:
 
     _instance = None
 
-    def __new__(cls):
+    def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
+    def __init__(self, db_path: str = None):
         if self._initialized:
             return
 
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.db_path = os.path.join(project_root, "hospital.db")
+        if db_path is None:
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            db_path = os.environ.get("PYPHONE_DB_PATH") or os.path.join(project_root, "hospital.db")
+        self.db_path = db_path
         self._initialized = True
 
         self._session = {
@@ -128,11 +130,31 @@ class Database:
         conn.commit()
         conn.close()
 
-    def hash_password(self, password):
-        return hashlib.sha256(password.encode()).hexdigest()
+    # Password Hashing
+    # Delegates to apps.shared.security so the hashing scheme lives in one
+    # place. See that module for why bcrypt and how legacy hashes are handled.
+    def hash_password(self, password) -> str:
+        return security.hash_password(password)
 
-    def verify_password(self, password, password_hash):
-        return self.hash_password(password) == password_hash
+    def verify_password(self, password, password_hash) -> bool:
+        return security.verify_password(password, password_hash)
+
+    # Tables holding a password_hash column. Named explicitly so the table
+    # name interpolated below can only ever be one of these.
+    _PASSWORD_TABLES = ("admins", "doctors", "patients")
+
+    def _upgrade_password_hash(self, table: str, user_id: int, password: str):
+        """Replace an outdated hash with a fresh bcrypt one after a good login."""
+        if table not in self._PASSWORD_TABLES:
+            raise ValueError(f"unknown table: {table}")
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            f'UPDATE {table} SET password_hash = ? WHERE id = ?',
+            (security.hash_password(password), user_id)
+        )
+        conn.commit()
+        conn.close()
 
     # Session Management
     def _load_session(self):
@@ -297,6 +319,8 @@ class Database:
         row = cursor.fetchone()
         conn.close()
         if row and self.verify_password(password, row['password_hash']):
+            if security.needs_rehash(row['password_hash']):
+                self._upgrade_password_hash('admins', row['id'], password)
             return self._row_to_admin(row)
         return None
 
@@ -408,6 +432,8 @@ class Database:
         row = cursor.fetchone()
         conn.close()
         if row and self.verify_password(password, row['password_hash']):
+            if security.needs_rehash(row['password_hash']):
+                self._upgrade_password_hash('doctors', row['id'], password)
             return self._row_to_doctor(row)
         return None
 
@@ -554,6 +580,8 @@ class Database:
         row = cursor.fetchone()
         conn.close()
         if row and row['password_hash'] and self.verify_password(password, row['password_hash']):
+            if security.needs_rehash(row['password_hash']):
+                self._upgrade_password_hash('patients', row['id'], password)
             return self._row_to_patient(row)
         return None
 

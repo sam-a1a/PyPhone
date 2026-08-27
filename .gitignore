@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local database. hospital.db is recreated and seeded on first run.
+hospital.db
+
+# Generated reports
+reports/*.pdf
+reports/*.xlsx
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store

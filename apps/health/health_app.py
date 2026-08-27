@@ -1,4 +1,5 @@
 import pygame
+import secrets
 from apps.base_app import BaseApp
 from apps.health.components import BottomNavbar
 from apps.health.screens import (
@@ -15,7 +16,10 @@ from apps.health.screens import (
     MapScreen
 )
 from apps.shared import Database
+from apps.shared.verification import verification
+from apps.verify_screen import VerifyScreen
 from components import draw_status_bar
+from components.notification import NotificationBanner
 
 class HealthApp(BaseApp):
 
@@ -30,8 +34,13 @@ class HealthApp(BaseApp):
             "signup": SignupScreen(),
             "terms": TermsScreen(),
             "main": MainScreen(),
-            "forgot_password": ForgotPasswordScreen()
+            "forgot_password": ForgotPasswordScreen(),
+            "verify": VerifyScreen(app_name="Health", accent=(0, 122, 255),
+                                   back_target="signup"),
         }
+
+        # The code is delivered the way a real one would be: as a notification
+        self.notification = NotificationBanner()
 
         if self.db.is_logged_in():
             self.current_screen = "main"
@@ -62,8 +71,65 @@ class HealthApp(BaseApp):
         elif tab_name == "book":
             self.tab_screens["book"].load_doctors()
 
-    def save_login(self):
-        self.db.save_session("patient", 1, "demo@patient.com")
+    def notify_code(self, email):
+        #Show the verification code as a system notification banner
+        code = verification.peek_code(email)
+        if code is None:
+            return
+        self.notification.show(
+            "Health", "Verification code",
+            f"{code} is your Health verification code.",
+            icon_name="health",
+        )
+
+    def start_verification(self):
+        #Move to the code screen after a signup form has been submitted
+        pending = self.screens["signup"].pending_signup
+        if not pending:
+            return
+        self.screens["verify"].start(pending["email"])
+        self.current_screen = "verify"
+        self.notify_code(pending["email"])
+
+    def complete_signup(self):
+        #The code checked out, so the account can finally be created
+        pending = self.screens["signup"].pending_signup
+        if not pending:
+            return
+        patient_id = self.db.register_patient(
+            name=pending["name"], email=pending["email"], password=pending["password"]
+        )
+        if patient_id is None:
+            # Someone claimed the address between form and code
+            self.screens["signup"].form_error = "That email already has an account"
+            self.current_screen = "signup"
+            return
+        self.db.save_session("patient", patient_id, pending["email"])
+        self.screens["signup"].reset()
+        self.show_navbar = True
+        self.refresh_tab_data("home")
+
+    def apple_login(self):
+        self.social_login(self.apple_modal.user_email, "Apple User")
+
+    def google_login(self):
+        index = self.google_modal.selected_account
+        account = self.google_modal.accounts[index if index is not None else 0]
+        self.social_login(account["email"], account["name"])
+
+    def social_login(self, email, name):
+        #Apple and Google sign-in: reuse the account if it exists, else make one
+        patient = self.db.get_patient_by_email(email)
+        if patient is None:
+            patient_id = self.db.register_patient(
+                name=name, email=email, password=secrets.token_urlsafe(32)
+            )
+            if patient_id is None:
+                return
+        else:
+            patient_id = patient.id
+        self.db.save_session("patient", patient_id, email)
+        self.refresh_tab_data("home")
 
     def logout(self):
         self.db.clear_session()
@@ -96,16 +162,23 @@ class HealthApp(BaseApp):
             if result == "complete":
                 self.active_modal = None
                 self.show_navbar = True
-                self.save_login()
+                self.apple_login()
         elif self.active_modal == "google":
             result = self.google_modal.update()
             self.google_modal.draw(self.screen)
             if result == "complete":
                 self.active_modal = None
                 self.show_navbar = True
-                self.save_login()
+                self.google_login()
+
+        self.notification.update()
+        self.notification.draw(self.screen)
 
     def handle_event(self, event):
+        # A tap on the banner dismisses it rather than reaching the screen below
+        if self.notification.handle_event(event):
+            return
+
         if self.active_modal == "apple":
             result = self.apple_modal.handle_event(event)
             if result == "cancel":
@@ -114,7 +187,7 @@ class HealthApp(BaseApp):
             elif result == "complete":
                 self.active_modal = None
                 self.show_navbar = True
-                self.save_login()
+                self.apple_login()
             return
 
         if self.active_modal == "google":
@@ -125,7 +198,7 @@ class HealthApp(BaseApp):
             elif result == "complete":
                 self.active_modal = None
                 self.show_navbar = True
-                self.save_login()
+                self.google_login()
             return
 
         if self.show_navbar:
@@ -148,6 +221,9 @@ class HealthApp(BaseApp):
         current = self.screens[self.current_screen]
         result = current.handle_event(event)
 
+        if self.current_screen == "verify" and self.screens["verify"].take_resend_request():
+            self.notify_code(self.screens["verify"].email)
+
         if result:
             if result == "close":
                 self.close()
@@ -160,9 +236,13 @@ class HealthApp(BaseApp):
             elif result == "google_signin":
                 self.google_modal.reset()
                 self.active_modal = "google"
+            elif result == "verify":
+                self.start_verification()
+            elif result == "verified":
+                self.complete_signup()
             elif result == "main":
                 self.show_navbar = True
-                self.save_login()
+                self.refresh_tab_data("home")
             elif result in self.screens:
                 target_screen = self.screens[result]
                 if hasattr(target_screen, 'reset_swipe'):

@@ -63,7 +63,8 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest --cov=apps.shared --cov=config --cov=utils \
+          pytest --cov=apps.shared --cov=apps.verify_screen \
+                 --cov=components.notification --cov=config --cov=utils \
                  --cov-report=term-missing --cov-report=xml \
                  --cov-fail-under=95
 

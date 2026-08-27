@@ -35,7 +35,6 @@ class Database:
         }
 
         self.create_tables()
-        self.seed_demo_data()
 
         # Try to restore previous session from disk
         self._load_session()
@@ -155,6 +154,84 @@ class Database:
         )
         conn.commit()
         conn.close()
+
+    # Account Registration
+    # Signing up is the only way an account comes into existence: there is no
+    # seeded data. Each of these returns the new id, or None if the email is
+    # already taken.
+
+    @staticmethod
+    def _next_number(existing, prefix):
+        """PAT001, PAT002, ... Picks up after the highest number in use.
+
+        Counting rows would reuse a number after a deletion, and both columns
+        are UNIQUE, so the insert would fail.
+        """
+        highest = 0
+        for value in existing:
+            if value and value.startswith(prefix):
+                try:
+                    highest = max(highest, int(value[len(prefix):]))
+                except ValueError:
+                    continue
+        return f"{prefix}{highest + 1:03d}"
+
+    def next_patient_number(self) -> str:
+        conn = self.get_connection()
+        rows = conn.execute('SELECT patient_number FROM patients').fetchall()
+        conn.close()
+        return self._next_number([row['patient_number'] for row in rows], "PAT")
+
+    def next_doctor_number(self) -> str:
+        conn = self.get_connection()
+        rows = conn.execute('SELECT doctor_number FROM doctors').fetchall()
+        conn.close()
+        return self._next_number([row['doctor_number'] for row in rows], "DOC")
+
+    def email_taken(self, email: str) -> bool:
+        #An email may only belong to one account, of any kind
+        email = (email or "").strip()
+        if not email:
+            return False
+        return any([
+            self.get_patient_by_email(email) is not None,
+            self.get_doctor_by_email(email) is not None,
+            self.get_admin_by_email(email) is not None,
+        ])
+
+    def register_patient(self, name: str, email: str, password: str,
+                         phone: str = "", age: int = 0) -> Optional[int]:
+        email = (email or "").strip()
+        if self.email_taken(email):
+            return None
+        patient = Patient(
+            name=(name or "").strip(), email=email, phone=phone, age=age,
+            patient_number=self.next_patient_number(),
+            password_hash=self.hash_password(password),
+        )
+        return self.add_patient(patient)
+
+    def register_doctor(self, name: str, email: str, password: str,
+                        specialty: str, phone: str = "", age: int = 0) -> Optional[int]:
+        email = (email or "").strip()
+        if self.email_taken(email):
+            return None
+        doctor = Doctor(
+            name=(name or "").strip(), email=email, phone=phone, age=age,
+            doctor_number=self.next_doctor_number(), specialty=specialty,
+            password_hash=self.hash_password(password),
+        )
+        return self.add_doctor(doctor)
+
+    def register_admin(self, name: str, email: str, password: str) -> Optional[int]:
+        email = (email or "").strip()
+        if self.email_taken(email):
+            return None
+        admin = Admin(
+            name=(name or "").strip(), email=email,
+            password_hash=self.hash_password(password),
+        )
+        return self.add_admin(admin)
 
     # Session Management
     def _load_session(self):
@@ -469,7 +546,8 @@ class Database:
         ''', (
             patient.name, patient.email, patient.phone, patient.age,
             patient.patient_number, patient.disease, patient.assigned_doctor_id,
-            patient.medical_history, "", datetime.now().isoformat()
+            patient.medical_history, patient.password_hash,
+            datetime.now().isoformat()
         ))
         patient_id = cursor.lastrowid
         conn.commit()
@@ -884,6 +962,7 @@ class Database:
             phone=row['phone'] or "", age=row['age'] or 0,
             patient_number=row['patient_number'] or "", disease=row['disease'] or "",
             assigned_doctor_id=row['assigned_doctor_id'], medical_history=row['medical_history'] or "",
+            password_hash=row['password_hash'] or "",
             created_at=datetime.fromisoformat(row['created_at']) if row['created_at'] else None
         )
 
@@ -903,71 +982,6 @@ class Database:
             appt.doctor_specialty = row['doctor_specialty']
         return appt
 
-    def seed_demo_data(self):
-        #Seed demo data if database is empty
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        # Check if admins table has data
-        cursor.execute('SELECT COUNT(*) FROM admins')
-        admin_count = cursor.fetchone()[0]
-
-        # Check if doctors table has data
-        cursor.execute('SELECT COUNT(*) FROM doctors')
-        doctor_count = cursor.fetchone()[0]
-
-        if admin_count > 0 and doctor_count > 0:
-            conn.close()
-            return
-
-        # Seed Admins
-        if admin_count == 0:
-            demo_admins = [
-                Admin(
-                    name="System Administrator",
-                    email="admin@admin.com",
-                    password_hash=self.hash_password("adminadmin"),
-                    is_active=True
-                ),
-            ]
-            for admin in demo_admins:
-                self.add_admin(admin)
-
-        # Seed Docs
-        if doctor_count == 0:
-            demo_doctors = [
-                # Dr. Jihan (1 Doctor)
-                Doctor(
-                    name="Dr. Jihan Doctor",
-                    email="jihan@demo.com",
-                    phone="+1234567899",
-                    age=35,
-                    doctor_number="DOC000",
-                    specialty="General Practice",
-                    password_hash=self.hash_password("jihanjihan"),
-                    consultation_fee=100.0
-                )
-            ]
-
-            for doctor in demo_doctors:
-                self.add_doctor(doctor)
-
-            # Seed Pats
-            # 1 Pat
-            demo_patients = [
-                Patient(name="Ahmad Al-Ali", email="ahmad.ali@email.com", phone="+963956789012",
-                       age=35, patient_number="PAT001", disease="Hypertension", assigned_doctor_id=1)
-            ]
-
-            for patient in demo_patients:
-                self.add_patient(patient)
-
-            # Seed Apoits
-            # No Apoits
-            pass
-
-        conn.close()
-
     def reset_database(self):
         #Reset DB
         conn = self.get_connection()
@@ -979,4 +993,3 @@ class Database:
         conn.commit()
         conn.close()
         self.clear_session()
-        self.seed_demo_data()

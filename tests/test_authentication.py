@@ -96,16 +96,22 @@ class TestPasswordsAreNotStoredInTheClear:
         second_id = empty_db.add_admin(second)
         assert stored_hash(empty_db, "admins", first_id) != stored_hash(empty_db, "admins", second_id)
 
-    def test_seeded_demo_accounts_are_hashed_with_bcrypt(self, db):
-        # The seeding path must not reintroduce the old scheme
-        assert stored_hash(db, "admins", 1).startswith("$2b$")
-        assert stored_hash(db, "doctors", 1).startswith("$2b$")
+    def test_registration_hashes_with_bcrypt(self, db):
+        # The registration path must not reintroduce the old scheme
+        patient_id = db.register_patient("Reg Tester", "reg@test.com", "registered1")
+        assert stored_hash(db, "patients", patient_id).startswith("$2b$")
 
-    def test_seeded_demo_admin_can_log_in(self, db):
-        assert db.authenticate_admin("admin@admin.com", "adminadmin") is not None
+    def test_a_registered_patient_can_log_in(self, db):
+        db.register_patient("Reg Tester", "reg@test.com", "registered1")
+        assert db.authenticate_patient("reg@test.com", "registered1") is not None
 
-    def test_seeded_demo_doctor_can_log_in(self, db):
-        assert db.authenticate_doctor("jihan@demo.com", "jihanjihan") is not None
+    def test_a_registered_doctor_can_log_in(self, db):
+        db.register_doctor("Dr. Reg", "docreg@test.com", "registered1", "ENT")
+        assert db.authenticate_doctor("docreg@test.com", "registered1") is not None
+
+    def test_a_registered_admin_can_log_in(self, db):
+        db.register_admin("Reg Admin", "adminreg@test.com", "registered1")
+        assert db.authenticate_admin("adminreg@test.com", "registered1") is not None
 
 
 class TestLegacyHashMigration:

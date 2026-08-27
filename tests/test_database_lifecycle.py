@@ -28,10 +28,11 @@ class TestSchema:
         assert {"admins", "doctors", "patients"} <= table_names(db)
 
     def test_rows_come_back_keyed_by_column_name(self, db):
+        db.register_admin("Row Reader", "rows@hospital.test", "rowspass1")
         conn = db.get_connection()
         row = conn.execute("SELECT name FROM admins LIMIT 1").fetchone()
         conn.close()
-        assert row["name"]
+        assert row["name"] == "Row Reader"
 
     def test_an_explicit_path_is_used(self, tmp_path):
         Database._instance = None
@@ -54,7 +55,6 @@ class TestSchema:
         Database._instance = None
         monkeypatch.delenv("PYPHONE_DB_PATH", raising=False)
         monkeypatch.setattr(Database, "create_tables", lambda self: None)
-        monkeypatch.setattr(Database, "seed_demo_data", lambda self: None)
         monkeypatch.setattr(Database, "_load_session", lambda self: None)
         try:
             assert Database().db_path.endswith("hospital.db")
@@ -62,35 +62,34 @@ class TestSchema:
             Database._instance = None
 
 
-class TestSeeding:
+class TestNoSeeding:
+    """A new database starts empty. Accounts exist only once someone signs up."""
 
-    def test_a_demo_admin_is_seeded(self, db):
-        assert db.get_admin_by_email("admin@admin.com") is not None
+    def test_a_new_database_has_no_admins(self, db):
+        assert db.get_all_admins() == []
 
-    def test_a_demo_doctor_is_seeded(self, db):
-        doc = db.get_doctor_by_email("jihan@demo.com")
-        assert doc is not None
-        assert doc.specialty == "General Practice"
+    def test_a_new_database_has_no_doctors(self, db):
+        assert db.get_all_doctors(active_only=False) == []
 
-    def test_a_demo_patient_is_seeded(self, db):
-        pat = db.get_patient_by_email("ahmad.ali@email.com")
-        assert pat is not None
-        assert pat.assigned_doctor_id == 1
+    def test_a_new_database_has_no_patients(self, db):
+        assert db.get_all_patients() == []
 
-    def test_no_appointments_are_seeded(self, db):
+    def test_a_new_database_has_no_appointments(self, db):
         assert db.get_all_appointments() == []
 
-    def test_seeding_again_does_not_duplicate_rows(self, db):
-        db.seed_demo_data()
-        db.seed_demo_data()
-        assert len(db.get_all_admins()) == 1
-        assert len(db.get_all_doctors()) == 1
+    def test_nobody_is_logged_in(self, db):
+        assert db.is_logged_in() is False
 
-    def test_seeding_does_not_run_over_an_existing_database(self, empty_db, admin, doctor):
-        # Both tables have rows, so seeding must leave them alone
-        empty_db.seed_demo_data()
-        assert [a.email for a in empty_db.get_all_admins()] == [admin.email]
-        assert [d.email for d in empty_db.get_all_doctors()] == [doctor.email]
+    def test_the_old_demo_credentials_do_not_work(self, db):
+        # They used to be seeded in; nothing should accept them now
+        assert db.authenticate_admin("admin@admin.com", "adminadmin") is None
+        assert db.authenticate_doctor("jihan@demo.com", "jihanjihan") is None
+
+    def test_there_is_no_seeding_method_left(self):
+        assert not hasattr(Database, "seed_demo_data")
+
+    def test_statistics_are_all_zero(self, db):
+        assert set(db.get_statistics().values()) == {0}
 
 
 class TestAdminCrud:
@@ -180,17 +179,19 @@ class TestStatistics:
 
 class TestReset:
 
-    def test_reset_clears_the_data_and_reseeds(self, empty_db, admin, doctor, patient, appointment):
+    def test_reset_clears_every_table(self, empty_db, admin, doctor, patient, appointment):
         empty_db.reset_database()
         assert empty_db.get_all_appointments() == []
-        assert [a.email for a in empty_db.get_all_admins()] == ["admin@admin.com"]
-        assert [d.email for d in empty_db.get_all_doctors()] == ["jihan@demo.com"]
+        assert empty_db.get_all_patients() == []
+        assert empty_db.get_all_doctors(active_only=False) == []
+        assert empty_db.get_all_admins() == []
 
     def test_reset_logs_the_current_user_out(self, empty_db, admin):
         empty_db.save_session("admin", admin.id, admin.email)
         empty_db.reset_database()
         assert empty_db.is_logged_in() is False
 
-    def test_the_reseeded_admin_can_log_in(self, empty_db):
+    def test_reset_does_not_put_demo_accounts_back(self, empty_db, admin):
         empty_db.reset_database()
-        assert empty_db.authenticate_admin("admin@admin.com", "adminadmin") is not None
+        assert empty_db.authenticate_admin("admin@admin.com", "adminadmin") is None
+        assert empty_db.authenticate_admin(admin.email, "adminpass") is None

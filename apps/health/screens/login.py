@@ -2,9 +2,11 @@ import pygame
 import re
 from config import SCREEN_WIDTH, COLOR_WHITE, COLOR_BLACK
 from apps.health.components import draw_button, draw_social_button, draw_input_field
+from apps.shared import Database
 
 BLUE = (0, 122, 255)
 GREY = (142, 142, 147)
+RED = (255, 59, 48)
 
 FONT_TITLE = pygame.font.SysFont("Arial", 28, bold=True)
 FONT_BODY = pygame.font.SysFont("Arial", 16)
@@ -16,6 +18,8 @@ EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 class LoginScreen:
 
     def __init__(self):
+        self.db = Database()
+        self.login_error = None
         self.email_text = ""
         self.password_text = ""
         self.active_input = None
@@ -65,6 +69,35 @@ class LoginScreen:
             len(self.password_text) >= 8
         )
 
+    def attempt_login(self):
+        """Check the credentials against the database. Returns "main" or None."""
+        self.email_touched = True
+        self.password_touched = True
+
+        if not self.is_form_valid():
+            return None
+
+        email = self.email_text.strip()
+        patient = self.db.authenticate_patient(email, self.password_text)
+        if patient is None:
+            # Deliberately vague: saying which half was wrong tells an attacker
+            # whether the address has an account
+            self.login_error = "Incorrect email or password"
+            self.password_text = ""
+            return None
+
+        self.login_error = None
+        self.db.save_session("patient", patient.id, patient.email)
+        return "main"
+
+    def reset(self):
+        self.email_text = ""
+        self.password_text = ""
+        self.active_input = None
+        self.email_touched = False
+        self.password_touched = False
+        self.login_error = None
+
     def draw(self, screen):
         self.update_error_animations()
 
@@ -99,6 +132,10 @@ class LoginScreen:
         self.forgot_password_x = SCREEN_WIDTH - forgot_text.get_width() - 20
         screen.blit(forgot_text, (self.forgot_password_x, current_y))
         current_y += 40
+
+        if self.login_error:
+            error_text = FONT_SMALL.render(self.login_error, True, RED)
+            screen.blit(error_text, (20, current_y - 22))
 
         self.button_y = current_y
         button_color = BLUE if self.is_form_valid() else GREY
@@ -153,12 +190,7 @@ class LoginScreen:
                     return "forgot_password"
 
             if hasattr(self, 'button_y') and self.button_y < y < self.button_y + 50:
-                if self.is_form_valid():
-                    return "main"
-                else:
-                    self.email_touched = True
-                    self.password_touched = True
-                return None
+                return self.attempt_login()
 
             if hasattr(self, 'apple_button_y') and self.apple_button_y < y < self.apple_button_y + 50:
                 if 20 < x < SCREEN_WIDTH - 20:
@@ -181,12 +213,8 @@ class LoginScreen:
             if event.key == pygame.K_ESCAPE:
                 return "onboarding"
             elif event.key == pygame.K_RETURN:
-                if self.is_form_valid():
-                    return "main"
-                else:
-                    self.email_touched = True
-                    self.password_touched = True
                 self.active_input = None
+                return self.attempt_login()
             elif event.key == pygame.K_TAB:
                 if self.active_input == "email":
                     self.email_touched = True
@@ -204,6 +232,7 @@ class LoginScreen:
                     else:
                         self.password_text = self.password_text[:-1]
                 elif event.unicode and event.unicode.isprintable():
+                    self.login_error = None
                     if self.active_input == "email":
                         self.email_text += event.unicode
                     else:

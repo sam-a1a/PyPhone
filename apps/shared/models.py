@@ -44,6 +44,7 @@ class Patient(Person):
     disease: str = ""
     assigned_doctor_id: Optional[int] = None
     medical_history: str = ""
+    password_hash: str = ""
 
     def to_dict(self):
         #Convert to dic
@@ -54,6 +55,7 @@ class Patient(Person):
             'assigned_doctor_id': self.assigned_doctor_id,
             'medical_history': self.medical_history
         })
+        # password_hash is deliberately left out, as it is on Admin
         return data
 
 @dataclass

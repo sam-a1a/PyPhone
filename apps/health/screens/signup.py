@@ -2,9 +2,12 @@ import pygame
 import re
 from config import SCREEN_WIDTH, COLOR_WHITE, COLOR_BLACK
 from apps.health.components import draw_button, draw_social_button, draw_input_field, draw_checkbox
+from apps.shared import Database
+from apps.shared.verification import verification
 
 BLUE = (0, 122, 255)
 GREY = (142, 142, 147)
+RED = (255, 59, 48)
 
 FONT_TITLE = pygame.font.SysFont("Arial", 28, bold=True)
 FONT_BODY = pygame.font.SysFont("Arial", 16)
@@ -17,11 +20,17 @@ EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 class SignupScreen:
 
     def __init__(self):
+        self.db = Database()
         self.name_text = ""
         self.email_text = ""
         self.password_text = ""
         self.active_input = None
         self.terms_accepted = False
+
+        # Set when the form is submitted; the account is only created once the
+        # code has been verified, so nothing is written to the database yet
+        self.pending_signup = None
+        self.form_error = None
 
         self.name_touched = False
         self.email_touched = False
@@ -86,6 +95,43 @@ class SignupScreen:
             self.terms_accepted
         )
 
+    def attempt_signup(self):
+        """Validate, reserve nothing, and send a code. Returns "verify" or None."""
+        self.name_touched = True
+        self.email_touched = True
+        self.password_touched = True
+
+        if not self.is_form_valid():
+            if not self.terms_accepted:
+                self.form_error = "Please accept the Terms to continue"
+            return None
+
+        email = self.email_text.strip()
+        if self.db.email_taken(email):
+            self.form_error = "That email already has an account"
+            return None
+
+        self.form_error = None
+        self.pending_signup = {
+            "name": self.name_text.strip(),
+            "email": email,
+            "password": self.password_text,
+        }
+        verification.send_code(email)
+        return "verify"
+
+    def reset(self):
+        self.name_text = ""
+        self.email_text = ""
+        self.password_text = ""
+        self.active_input = None
+        self.terms_accepted = False
+        self.name_touched = False
+        self.email_touched = False
+        self.password_touched = False
+        self.pending_signup = None
+        self.form_error = None
+
     def draw(self, screen):
         self.update_error_animations()
 
@@ -137,6 +183,10 @@ class SignupScreen:
         screen.blit(privacy_link, (80, current_y + 20))
         self.terms_y = current_y
         current_y += 55
+
+        if self.form_error:
+            error_text = FONT_SMALL.render(self.form_error, True, RED)
+            screen.blit(error_text, (20, current_y - 22))
 
         self.button_y = current_y
 
@@ -199,13 +249,7 @@ class SignupScreen:
                 return "terms"
 
             if hasattr(self, 'button_y') and self.button_y < y < self.button_y + 50:
-                if self.is_form_valid():
-                    return "main"
-                else:
-                    self.name_touched = True
-                    self.email_touched = True
-                    self.password_touched = True
-                return None
+                return self.attempt_signup()
 
             if hasattr(self, 'signin_link_y') and self.signin_link_y < y < self.signin_link_y + 30:
                 return "login"
@@ -222,13 +266,8 @@ class SignupScreen:
             if event.key == pygame.K_ESCAPE:
                 return "login"
             elif event.key == pygame.K_RETURN:
-                if self.is_form_valid():
-                    return "main"
-                else:
-                    self.name_touched = True
-                    self.email_touched = True
-                    self.password_touched = True
                 self.active_input = None
+                return self.attempt_signup()
             elif event.key == pygame.K_TAB:
                 if self.active_input == "name":
                     self.name_touched = True

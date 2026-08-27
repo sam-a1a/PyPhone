@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from apps.shared import security
+from apps.shared.verification import verification
 from apps.shared.database import Database
 from apps.shared.models import Admin, Appointment, Doctor, Patient
 
@@ -38,7 +39,9 @@ def cached_hash(password):
 
 @pytest.fixture
 def db(tmp_path):
-    """A Database backed by a fresh file, with the demo data seeded.
+    """A Database backed by a fresh, empty file.
+
+    There is no demo data: accounts only exist once someone signs up.
 
     Database is a singleton, so the cached instance is cleared on the way in
     and out; otherwise the first test to build one would pin every later test
@@ -46,23 +49,15 @@ def db(tmp_path):
     """
     Database._instance = None
     database = Database(db_path=str(tmp_path / "test_hospital.db"))
+    verification.clear_all()
     yield database
+    verification.clear_all()
     Database._instance = None
 
 
 @pytest.fixture
 def empty_db(db):
-    """Same, but with the seeded demo rows removed."""
-    conn = db.get_connection()
-    cursor = conn.cursor()
-    for table in ("appointments", "patients", "doctors", "admins", "sessions"):
-        cursor.execute(f"DELETE FROM {table}")
-        # The tables use AUTOINCREMENT, so ids would otherwise carry on from
-        # where the seeded rows left off and make ids unpredictable in tests
-        cursor.execute("DELETE FROM sqlite_sequence WHERE name = ?", (table,))
-    conn.commit()
-    conn.close()
-    db.clear_session()
+    """Alias for `db`, kept because a new database is already empty."""
     return db
 
 

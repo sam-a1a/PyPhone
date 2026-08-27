@@ -46,17 +46,23 @@ class TestAddAndGet:
         with pytest.raises(sqlite3.IntegrityError):
             make_patient(empty_db, email="other@patients.test", patient_number="PAT100")
 
-    def test_patients_are_added_without_a_password(self, empty_db, patient):
-        # add_patient hardcodes an empty hash; admin-created patients get no
-        # login until one is set for them
+    def test_a_patient_added_without_a_password_has_an_empty_hash(self, empty_db, patient):
+        # Patients an admin enters have no login until one is set for them;
+        # patients who sign up go through register_patient instead
         conn = empty_db.get_connection()
         row = conn.execute("SELECT password_hash FROM patients WHERE id = ?", (patient.id,)).fetchone()
         conn.close()
         assert row["password_hash"] == ""
 
-    def test_the_patient_model_carries_no_password_hash(self, empty_db, patient):
-        # Deliberate: the hash never leaves the database layer for patients
-        assert not hasattr(empty_db.get_patient(patient.id), "password_hash")
+    def test_a_stored_password_round_trips(self, empty_db):
+        pat = Patient(name="With Password", email="wp@patients.test",
+                      patient_number="PAT500",
+                      password_hash=empty_db.hash_password("mypassword1"))
+        pat.id = empty_db.add_patient(pat)
+        assert empty_db.get_patient(pat.id).password_hash.startswith("$2b$")
+
+    def test_to_dict_never_leaks_the_password_hash(self, empty_db, patient):
+        assert "password_hash" not in empty_db.get_patient(patient.id).to_dict()
 
 
 class TestListing:

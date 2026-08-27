@@ -2,6 +2,7 @@ import pygame
 import re
 from config import SCREEN_WIDTH, COLOR_WHITE, COLOR_BLACK
 from apps.shared import Database, Doctor
+from apps.shared.verification import verification
 from apps.shared.models import SPECIALTIES
 
 BLUE = (0, 122, 255)
@@ -38,6 +39,13 @@ class AdminSignupScreen:
         self.max_error_height = 18
         self.animation_speed = 2
         self.scroll_y = 0
+
+        # With no seeded accounts, this screen is the only way in for either
+        # role, so it asks which one you are signing up as.
+        self.role = "doctor"          # "doctor" or "admin"
+        self.pending_signup = None
+        self.form_error = None
+
         pygame.key.set_repeat(400, 50)
 
     def reset(self):
@@ -57,6 +65,9 @@ class AdminSignupScreen:
         self.password_error_height = 0
         self.specialty_error_height = 0
         self.scroll_y = 0
+        self.role = "doctor"
+        self.pending_signup = None
+        self.form_error = None
 
     def validate_name(self):
         if not self.name_touched:
@@ -117,37 +128,69 @@ class AdminSignupScreen:
             len(self.name_text.strip()) >= 2 and
             EMAIL_PATTERN.match(self.email_text) and
             len(self.password_text) >= 8 and
-            self.specialty_text and
+            (self.role == "admin" or bool(self.specialty_text)) and
             self.terms_accepted
         )
 
     def attempt_signup(self):
+        """Validate and send a code. Returns "verify" or None.
+
+        Nothing is written to the database here: the account is created once
+        the code has been confirmed.
+        """
         self.name_touched = True
         self.email_touched = True
         self.password_touched = True
         self.specialty_touched = True
 
         if not self.is_form_valid():
+            if not self.terms_accepted:
+                self.form_error = "Please accept the Terms to continue"
             return None
 
-        if self.db.get_doctor_by_email(self.email_text.strip()):
+        email = self.email_text.strip()
+        if self.db.email_taken(email):
+            self.form_error = "That email already has an account"
             return None
 
-        doctors = self.db.get_all_doctors(active_only=False)
-        doctor_number = f"DOC{len(doctors) + 1:03d}"
+        self.form_error = None
+        self.pending_signup = {
+            "name": self.name_text.strip(),
+            "email": email,
+            "password": self.password_text,
+            "specialty": self.specialty_text,
+            "role": self.role,
+        }
+        verification.send_code(email)
+        return "verify"
 
-        doctor = Doctor(
-            name=self.name_text.strip(),
-            email=self.email_text.strip(),
-            specialty=self.specialty_text,
-            doctor_number=doctor_number,
-            password_hash=self.db.hash_password(self.password_text)
-        )
 
-        doctor_id = self.db.add_doctor(doctor)
-        self.db.save_session("doctor", doctor_id, self.email_text.strip())
+    def draw_role_picker(self, screen, y):
+        """Segmented control: Doctor | Administrator. Returns the y below it."""
+        height = 36
+        width = SCREEN_WIDTH - 40
+        half = width // 2
+        track = pygame.Rect(20, y, width, height)
+        pygame.draw.rect(screen, (242, 242, 247), track, border_radius=9)
 
-        return "main"
+        selected_x = 20 if self.role == "doctor" else 20 + half
+        thumb = pygame.Rect(selected_x + 2, y + 2, half - 4, height - 4)
+        pygame.draw.rect(screen, COLOR_WHITE, thumb, border_radius=7)
+        pygame.draw.rect(screen, (220, 220, 225), thumb, 1, border_radius=7)
+
+        for index, (label, role) in enumerate((("Doctor", "doctor"),
+                                               ("Administrator", "admin"))):
+            color = COLOR_BLACK if self.role == role else GREY
+            text = FONT_SMALL.render(label, True, color)
+            centre = 20 + half * index + half // 2
+            screen.blit(text, (centre - text.get_width() // 2,
+                               y + height // 2 - text.get_height() // 2))
+
+        self.role_rects = {
+            "doctor": pygame.Rect(20, y, half, height),
+            "admin": pygame.Rect(20 + half, y, half, height),
+        }
+        return y + height
 
     def draw(self, screen):
         self.update_error_animations()
@@ -162,7 +205,7 @@ class AdminSignupScreen:
         subtitle = FONT_BODY.render("Join as a medical professional", True, GREY)
         screen.blit(subtitle, (20, 140))
 
-        current_y = 185
+        current_y = self.draw_role_picker(screen, 170) + 15
 
         name_error = self.validate_name()
         current_y = self.draw_input_field(
@@ -196,15 +239,18 @@ class AdminSignupScreen:
             screen.blit(hint_text, (20, current_y))
         current_y += 22
 
-        specialty_error = self.validate_specialty()
-        self.specialty_y = current_y
-        current_y = self.draw_dropdown(
-            screen, "Specialty", self.specialty_text,
-            20, current_y, SCREEN_WIDTH - 40,
-            self.specialty_dropdown_open,
-            specialty_error, self.specialty_error_height
-        )
-        current_y += 15
+        if self.role == "doctor":
+            specialty_error = self.validate_specialty()
+            self.specialty_y = current_y
+            current_y = self.draw_dropdown(
+                screen, "Specialty", self.specialty_text,
+                20, current_y, SCREEN_WIDTH - 40,
+                self.specialty_dropdown_open,
+                specialty_error, self.specialty_error_height
+            )
+            current_y += 15
+        else:
+            self.specialty_y = None
 
         self.terms_y = current_y
         self.draw_checkbox(screen, 20, current_y, self.terms_accepted)
@@ -213,6 +259,10 @@ class AdminSignupScreen:
         terms_link = FONT_SMALL.render("Terms of Service", True, BLUE)
         screen.blit(terms_link, (145, current_y + 2))
         current_y += 45
+
+        if self.form_error:
+            error_text = FONT_SMALL.render(self.form_error, True, (255, 59, 48))
+            screen.blit(error_text, (20, current_y - 20))
 
         self.button_y = current_y
         button_color = BLUE if self.is_form_valid() else GREY
@@ -240,7 +290,7 @@ class AdminSignupScreen:
         signin_link = FONT_SMALL.render("Sign In", True, BLUE)
         screen.blit(signin_link, (SCREEN_WIDTH // 2 + 60, current_y))
 
-        if self.specialty_dropdown_open:
+        if self.specialty_dropdown_open and self.specialty_y is not None:
             self.draw_dropdown_options(screen, 20, self.specialty_y + 70, SCREEN_WIDTH - 40)
 
     def draw_input_field(self, screen, placeholder, value, x, y, width, is_active, error=None, error_height=0):
@@ -420,7 +470,15 @@ class AdminSignupScreen:
                 self.reset()
                 return "login"
 
-            current_y = 185
+            if hasattr(self, 'role_rects'):
+                for role, rect in self.role_rects.items():
+                    if rect.collidepoint(x, y):
+                        self.role = role
+                        self.form_error = None
+                        self.specialty_dropdown_open = False
+                        return None
+
+            current_y = 221
 
             name_area_end = current_y + 50 + (self.name_error_height + 10 if self.name_error_height > 0 else 0)
             if current_y < y < name_area_end:
@@ -443,7 +501,8 @@ class AdminSignupScreen:
                 return None
             current_y = password_area_end + 22
 
-            if hasattr(self, 'specialty_y') and self.specialty_y < y < self.specialty_y + 50:
+            if getattr(self, 'specialty_y', None) is not None and \
+                    self.specialty_y < y < self.specialty_y + 50:
                 self.specialty_dropdown_open = not self.specialty_dropdown_open
                 self.specialty_touched = True
                 self.active_input = None

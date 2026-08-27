@@ -18,7 +18,10 @@ from apps.health_admin.screens import (
     GoogleSignInModal
 )
 from apps.shared import Database
+from apps.shared.verification import verification
+from apps.verify_screen import VerifyScreen
 from components import draw_status_bar
+from components.notification import NotificationBanner
 
 
 class HealthAdminApp(BaseApp):
@@ -37,7 +40,11 @@ class HealthAdminApp(BaseApp):
             "signup": AdminSignupScreen(),
             "terms": AdminTermsScreen(),
             "forgot_password": AdminForgotPasswordScreen(),
+            "verify": VerifyScreen(app_name="Health Admin", accent=(0, 122, 255),
+                                   back_target="signup"),
         }
+
+        self.notification = NotificationBanner()
 
         # Tab screens (after login)
         self.tab_screens = {
@@ -116,13 +123,57 @@ class HealthAdminApp(BaseApp):
         elif tab_name == "reports":
             pass
 
+    def notify_code(self, email):
+        #Deliver the verification code as a system notification banner
+        code = verification.peek_code(email)
+        if code is None:
+            return
+        self.notification.show(
+            "Health Admin", "Verification code",
+            f"{code} is your Health Admin verification code.",
+            icon_name="admin",
+        )
+
+    def start_verification(self):
+        pending = self.screens["signup"].pending_signup
+        if not pending:
+            return
+        self.screens["verify"].start(pending["email"])
+        self.current_screen = "verify"
+        self.notify_code(pending["email"])
+
+    def complete_signup(self):
+        #Code confirmed, so the account can be created and signed in
+        pending = self.screens["signup"].pending_signup
+        if not pending:
+            return
+
+        if pending["role"] == "admin":
+            user_id = self.db.register_admin(
+                name=pending["name"], email=pending["email"], password=pending["password"]
+            )
+            user_type = "admin"
+        else:
+            user_id = self.db.register_doctor(
+                name=pending["name"], email=pending["email"],
+                password=pending["password"], specialty=pending["specialty"],
+            )
+            user_type = "doctor"
+
+        if user_id is None:
+            self.screens["signup"].form_error = "That email already has an account"
+            self.current_screen = "signup"
+            return
+
+        self.db.save_session(user_type, user_id, pending["email"])
+        self.screens["signup"].reset()
+        self.handle_screen_result("admin_main" if user_type == "admin" else "doctor_main")
+
     def save_login(self):
-        #Save login session after social auth
-        doctors = self.db.get_all_doctors()
-        if doctors:
-            doctor = doctors[0]
-            self.db.save_session("doctor", doctor.id, doctor.email)
-            self.current_doctor = doctor
+        #Social auth: only signs in an account that already exists
+        current = self.db.get_current_doctor()
+        if current is not None:
+            self.current_doctor = current
             self.user_role = "doctor"
 
     def logout(self):
@@ -178,7 +229,14 @@ class HealthAdminApp(BaseApp):
                 self.navbar.set_admin_mode(False)  # Social login = doctor
                 self.refresh_tab_data("home")
 
+        self.notification.update()
+        self.notification.draw(self.screen)
+
     def handle_event(self, event):
+        # A tap on the banner dismisses it rather than reaching the screen below
+        if self.notification.handle_event(event):
+            return
+
         # Handle modal events first
         if self.active_modal == "apple":
             result = self.apple_modal.handle_event(event)
@@ -228,6 +286,9 @@ class HealthAdminApp(BaseApp):
         current = self.screens[self.current_screen]
         result = current.handle_event(event)
 
+        if self.current_screen == "verify" and self.screens["verify"].take_resend_request():
+            self.notify_code(self.screens["verify"].email)
+
         if result:
             self.handle_screen_result(result)
 
@@ -264,6 +325,10 @@ class HealthAdminApp(BaseApp):
             self.current_doctor = self.db.get_current_doctor()
             self.navbar.set_admin_mode(False)
             self.refresh_tab_data("home")
+        elif result == "verify":
+            self.start_verification()
+        elif result == "verified":
+            self.complete_signup()
         elif result == "logout":
             self.logout()
         elif result in self.screens:

@@ -9,12 +9,12 @@ dock, widgets and all — with two complete, database-backed applications
 installed on it.
 
 [![CI](https://github.com/sam-a1a/PyPhone/actions/workflows/ci.yml/badge.svg)](https://github.com/sam-a1a/PyPhone/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-393%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-560%20passing-brightgreen.svg)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen.svg)](#running-the-tests)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**~12,400 lines · 24 screens · 2 apps · 5 SQLite tables · 0 UI frameworks**
+**~13,150 lines · 25 screens · 2 apps · 5 SQLite tables · 0 UI frameworks**
 
 </div>
 
@@ -72,6 +72,20 @@ chosen day → confirm. Slots already taken are queried from the database and
 shown as unavailable, and availability is re-checked at the moment of booking,
 so two patients cannot take the same slot.
 
+### Signing up
+
+Filling in the form does not create an account. It sends a six-digit code,
+which arrives the way a real one would: as a system notification that slides
+down from under the Dynamic Island, holds, and slides away. Type it into the
+six boxes on the verify screen and the account is created and signed in.
+
+Nothing is written to the database until the code checks out. Codes expire
+after ten minutes, are burned after five wrong guesses, and cannot be resent
+for thirty seconds. A wrong code leaves no trace behind.
+
+The notification banner is a general component — `components/notification.py` —
+not a one-off for this flow.
+
 ### Health Admin — the staff side
 
 The same app serves two roles, and knows the difference.
@@ -104,7 +118,7 @@ composited through a per-pixel alpha mask rather than pygame's built-in
 scaled with `smoothscale`, cached after first use, and fall back to a
 generated rounded-square if a file is missing.
 
-**A 59-method SQLite layer** (`apps/shared/database.py`) covers five tables —
+**A 64-method SQLite layer** (`apps/shared/database.py`) covers five tables —
 admins, doctors, patients, appointments, sessions — with foreign keys,
 soft deletes, joined queries for appointment listings, availability checks,
 and statistics rollups for each of the three dashboards.
@@ -116,7 +130,7 @@ instead.
 
 **Passwords are hashed with bcrypt** — see [Password storage](#password-storage).
 
-**393 tests** and a CI matrix across Python 3.10–3.13.
+**560 tests** and a CI matrix across Python 3.10–3.13.
 
 ## Getting started
 
@@ -136,17 +150,15 @@ python main.py
 Tap **Health** (row 1) or **Admin** (row 4). Press `Esc` to go back, and again
 to quit.
 
-### Demo accounts
+### There are no demo accounts
 
-The database is created and seeded on first run.
+The database starts empty. Every account comes from signing up:
 
-| Role | Email | Password |
-|---|---|---|
-| Admin | `admin@admin.com` | `adminadmin` |
-| Doctor | `jihan@demo.com` | `jihanjihan` |
+- **Health → Sign Up** creates a patient.
+- **Admin → Sign Up** creates a doctor or an administrator — pick which with
+  the segmented control at the top of the form.
 
-Demo credentials for a local sample database. Change them before putting this
-anywhere real.
+Both go through [email verification](#signing-up) before the account exists.
 
 ## Running the tests
 
@@ -156,18 +168,21 @@ pytest
 ```
 
 ```
-393 passed
+560 passed
 
-Name                        Stmts   Miss  Cover
-------------------------------------------------
-apps/shared/database.py       529      0   100%
-apps/shared/models.py          78      0   100%
-apps/shared/security.py        39      0   100%
-apps/shared/validators.py      51      0   100%
-config.py                      37      7    81%
-utils.py                       40      0   100%
-------------------------------------------------
-TOTAL                         778      7    99%
+Name                            Stmts   Miss  Cover
+----------------------------------------------------
+apps/shared/database.py           547      0   100%
+apps/shared/models.py              79      0   100%
+apps/shared/security.py            39      0   100%
+apps/shared/validators.py          51      0   100%
+apps/shared/verification.py        68      0   100%
+apps/verify_screen.py             140      0   100%
+components/notification.py        130      0   100%
+config.py                          37      7    81%
+utils.py                           40      0   100%
+----------------------------------------------------
+TOTAL                            1135      7    99%
 ```
 
 CI fails the build if that total drops below 95%.
@@ -184,7 +199,8 @@ throwaway database in a temp directory, so `pytest` never touches your
 `hospital.db`.
 
 ```bash
-pytest --cov=apps.shared --cov=config --cov=utils --cov-report=term-missing
+pytest --cov=apps.shared --cov=components.notification \
+       --cov=apps.verify_screen --cov=config --cov=utils --cov-report=term-missing
 ```
 
 ## Project layout
@@ -194,7 +210,8 @@ main.py                  home screen: app grid, dock, widget, click routing
 config.py                screen size, colour palette, fonts
 utils.py                 sunset gradient, alpha-masked rounded rectangles
 
-components/              status bar + Dynamic Island, icons, dock, widgets
+components/              status bar + Dynamic Island, icons, dock, widgets,
+                         the notification banner
 
 apps/
   base_app.py            60fps run loop, event dispatch, header and bezel
@@ -202,15 +219,18 @@ apps/
   splash_screen.py       the hold-and-fade animation when an icon is tapped
 
   shared/                everything that is not drawing code
-    database.py          59 methods: CRUD, queries, statistics, sessions
+    database.py          64 methods: CRUD, queries, statistics, sessions
     models.py            Person → Patient / Doctor, plus Admin, Appointment
     security.py          bcrypt hashing and legacy migration
     validators.py        email, phone, name, age, password rules
+    verification.py      one-time signup codes: expiry, attempts, cooldown
+
+  verify_screen.py       the six-box code entry screen, shared by both apps
 
   health/                patient app        11 screens + 4 component modules
   health_admin/          staff app          13 screens + 6 component modules
 
-tests/                   393 tests across 11 files
+tests/                   560 tests across 15 files
 .github/workflows/       CI on Python 3.10, 3.11, 3.12, 3.13
 ```
 

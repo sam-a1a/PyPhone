@@ -272,4 +272,4 @@ you change under `apps/shared/`, and match the surrounding style.
 
 ## License
 
-[MIT](LICENSE) © Bassam Ghazaleh
+[MIT](LICENSE)
